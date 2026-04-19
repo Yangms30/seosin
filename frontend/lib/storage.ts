@@ -1,23 +1,7 @@
-const USER_ID_KEY = "briefbot_user_id"
+// Login is disabled for the demo: always return the seeded demo user_id=1.
+// The backend lifespan ensures this user + default settings exist.
+export const DEMO_USER_ID = 1
 
-function hasWindow(): boolean {
-  return typeof window !== "undefined" && typeof window.localStorage !== "undefined"
-}
-
-export function getUserId(): number | null {
-  if (!hasWindow()) return null
-  const raw = window.localStorage.getItem(USER_ID_KEY)
-  if (!raw) return null
-  const n = Number(raw)
-  return Number.isFinite(n) && n > 0 ? n : null
-}
-
-export function setUserId(id: number): void {
-  if (!hasWindow()) return
-  window.localStorage.setItem(USER_ID_KEY, String(id))
-}
-
-export function clearUserId(): void {
-  if (!hasWindow()) return
-  window.localStorage.removeItem(USER_ID_KEY)
+export function getUserId(): number {
+  return DEMO_USER_ID
 }

@@ -1,36 +1,111 @@
-"""Gemini-based analyzer with harness: validation, retries, importance recompute."""
+"""LLM analyzer: per-article 3-line summary + per-category radio synthesis.
+
+Default provider: OpenAI (gpt-5-nano). GeminiAnalyzer kept as legacy fallback.
+
+GPT-5 family note: does not accept custom `temperature` (always default 1.0).
+"""
 from __future__ import annotations
-import json
 import logging
 import re
 import time
-from dataclasses import dataclass
-from typing import Any
 
 import google.generativeai as genai
+from openai import OpenAI
 
 from config import get_settings
-from prompts.briefing import BRIEFING_SYSTEM, BRIEFING_USER_TEMPLATE
-from prompts.extract import EXTRACT_SYSTEM, EXTRACT_USER_TEMPLATE
+from prompts.article_summary import ARTICLE_SUMMARY_SYSTEM, ARTICLE_SUMMARY_USER_TEMPLATE
 from prompts.radio_script import RADIO_SYSTEM, RADIO_USER_TEMPLATE
 
-from .preprocessor import Cluster
+from .collector import RawArticle
 
 logger = logging.getLogger(__name__)
 
-REQUIRED_EXTRACT_FIELDS = {"topic", "key_entities", "core_fact", "sentiment", "importance_score"}
+
+def _fallback_summary(article: RawArticle) -> str:
+    """If LLM fails/empty, degrade to RSS summary or title."""
+    text = (article.summary or "").strip() or article.title
+    text = re.sub(r"\s+", " ", text).strip()
+    # Try to split into ~3 sentences by punctuation
+    parts = re.split(r"(?<=[.!?。])\s+|(?<=[다요][.!?。])\s+", text)
+    parts = [p for p in parts if p]
+    if len(parts) >= 3:
+        return "\n".join(parts[:3])
+    if len(parts) == 2:
+        return "\n".join(parts + [article.title])
+    return "\n".join([text, article.title, article.source or ""]).strip()
 
 
-@dataclass
-class AnalyzedBriefing:
-    category: str
-    title: str
-    summary: str
-    radio_script: str | None
-    importance_score: float
-    raw_analysis: dict[str, Any]
-    source_articles: list[dict[str, Any]]
+def _build_articles_block(articles: list[RawArticle], summaries: list[str]) -> str:
+    parts = []
+    for i, (a, s) in enumerate(zip(articles, summaries), 1):
+        src = a.source or "출처 미상"
+        parts.append(f"[기사{i} | {src}]\n제목: {a.title}\n요약:\n{s}")
+    return "\n\n".join(parts)
 
+
+# ============================================================
+# OpenAI (default — gpt-5-nano)
+# ============================================================
+
+class OpenAIAnalyzer:
+    def __init__(self):
+        cfg = get_settings()
+        if not cfg.OPENAI_API_KEY:
+            raise RuntimeError("OPENAI_API_KEY is not set in .env")
+        self.client = OpenAI(api_key=cfg.OPENAI_API_KEY)
+        self.model_name = cfg.OPENAI_MODEL
+        self.max_retries = cfg.LLM_MAX_RETRIES
+
+    def summarize_article(self, category: str, article: RawArticle) -> str:
+        user = ARTICLE_SUMMARY_USER_TEMPLATE.format(
+            category=category,
+            title=article.title,
+            source=article.source or "출처 미상",
+            body=(article.summary or article.title).strip(),
+        )
+        for attempt in range(self.max_retries + 1):
+            try:
+                resp = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": ARTICLE_SUMMARY_SYSTEM},
+                        {"role": "user", "content": user},
+                    ],
+                )
+                text = (resp.choices[0].message.content or "").strip()
+                if text and len(text) >= 30:
+                    return text
+                logger.warning("article summary too short (attempt %d)", attempt)
+            except Exception as exc:
+                logger.warning("article summary error (attempt %d): %s", attempt, exc)
+                time.sleep(0.5 * (attempt + 1))
+        return _fallback_summary(article)
+
+    def synthesize_radio(self, category: str, articles: list[RawArticle], summaries: list[str]) -> str | None:
+        block = _build_articles_block(articles, summaries)
+        user = RADIO_USER_TEMPLATE.format(
+            category=category,
+            n=len(articles),
+            articles_block=block,
+        )
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": RADIO_SYSTEM},
+                    {"role": "user", "content": user},
+                ],
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            return text or None
+        except Exception as exc:
+            logger.warning("radio synth error: %s", exc)
+            return None
+
+
+# ============================================================
+# Gemini (legacy fallback)
+# ============================================================
 
 class GeminiAnalyzer:
     def __init__(self):
@@ -40,119 +115,43 @@ class GeminiAnalyzer:
         genai.configure(api_key=cfg.GEMINI_API_KEY)
         self.model_name = cfg.GEMINI_MODEL
         self.max_retries = cfg.LLM_MAX_RETRIES
-        self._model_json = genai.GenerativeModel(
-            self.model_name,
-            generation_config={"response_mime_type": "application/json", "temperature": 0.3},
-        )
-        self._model_text = genai.GenerativeModel(
+        self._model = genai.GenerativeModel(
             self.model_name,
             generation_config={"temperature": 0.5},
         )
 
-    # ---------- public ----------
-    def analyze_clusters(self, category: str, clusters: list[Cluster], top_k: int = 3) -> list[AnalyzedBriefing]:
-        results: list[AnalyzedBriefing] = []
-        for cluster in clusters[:top_k]:
-            try:
-                analyzed = self._analyze_one(category, cluster)
-                if analyzed:
-                    results.append(analyzed)
-            except Exception as exc:
-                logger.exception("Cluster analysis failed for %s: %s", category, exc)
-        return results
-
-    # ---------- per-cluster ----------
-    def _analyze_one(self, category: str, cluster: Cluster) -> AnalyzedBriefing | None:
-        extract = self._step1_extract(category, cluster)
-        if not extract:
-            return None
-        briefing_text = self._step2_briefing(category, extract)
-        if not briefing_text:
-            return None
-        radio_text = self._step2_radio(category, briefing_text)
-
-        importance = self._recompute_importance(extract.get("importance_score", 5), cluster.size)
-        sources = [
-            {"title": m.title, "url": m.link, "source": m.source}
-            for m in cluster.members
-        ]
-        return AnalyzedBriefing(
+    def summarize_article(self, category: str, article: RawArticle) -> str:
+        user = ARTICLE_SUMMARY_USER_TEMPLATE.format(
             category=category,
-            title=str(extract.get("topic") or cluster.members[0].title)[:500],
-            summary=briefing_text,
-            radio_script=radio_text,
-            importance_score=importance,
-            raw_analysis=extract,
-            source_articles=sources,
+            title=article.title,
+            source=article.source or "출처 미상",
+            body=(article.summary or article.title).strip(),
         )
-
-    # ---------- LLM steps ----------
-    def _step1_extract(self, category: str, cluster: Cluster) -> dict[str, Any] | None:
-        user = EXTRACT_USER_TEMPLATE.format(category=category, context=cluster.representative_text)
-        prompt = f"{EXTRACT_SYSTEM}\n\n{user}"
+        prompt = f"{ARTICLE_SUMMARY_SYSTEM}\n\n{user}"
         for attempt in range(self.max_retries + 1):
             try:
-                resp = self._model_json.generate_content(prompt)
+                resp = self._model.generate_content(prompt)
                 text = (resp.text or "").strip()
-                data = self._parse_json(text)
-                if data and REQUIRED_EXTRACT_FIELDS.issubset(data.keys()):
-                    return data
-                logger.warning("extract validation failed (attempt %d): %s", attempt, text[:200])
+                if text and len(text) >= 30:
+                    return text
+                logger.warning("article summary too short (attempt %d)", attempt)
             except Exception as exc:
-                logger.warning("extract LLM error (attempt %d): %s", attempt, exc)
+                logger.warning("article summary error (attempt %d): %s", attempt, exc)
                 time.sleep(0.5 * (attempt + 1))
-        return None
+        return _fallback_summary(article)
 
-    def _step2_briefing(self, category: str, extract: dict[str, Any]) -> str | None:
-        user = BRIEFING_USER_TEMPLATE.format(category=category, extract_json=json.dumps(extract, ensure_ascii=False))
-        prompt = f"{BRIEFING_SYSTEM}\n\n{user}"
-        try:
-            resp = self._model_text.generate_content(prompt)
-            text = (resp.text or "").strip()
-            return text or None
-        except Exception as exc:
-            logger.warning("briefing LLM error: %s", exc)
-            return None
-
-    def _step2_radio(self, category: str, briefing: str) -> str | None:
-        user = RADIO_USER_TEMPLATE.format(category=category, briefing=briefing)
+    def synthesize_radio(self, category: str, articles: list[RawArticle], summaries: list[str]) -> str | None:
+        block = _build_articles_block(articles, summaries)
+        user = RADIO_USER_TEMPLATE.format(
+            category=category,
+            n=len(articles),
+            articles_block=block,
+        )
         prompt = f"{RADIO_SYSTEM}\n\n{user}"
         try:
-            resp = self._model_text.generate_content(prompt)
+            resp = self._model.generate_content(prompt)
             text = (resp.text or "").strip()
             return text or None
         except Exception as exc:
-            logger.warning("radio LLM error: %s", exc)
+            logger.warning("radio synth error: %s", exc)
             return None
-
-    # ---------- helpers ----------
-    @staticmethod
-    def _parse_json(text: str) -> dict[str, Any] | None:
-        if not text:
-            return None
-        # Strip code fences if model added them
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-        try:
-            data = json.loads(text)
-            return data if isinstance(data, dict) else None
-        except json.JSONDecodeError:
-            # Try to extract first {...} blob
-            m = re.search(r"\{[\s\S]*\}", text)
-            if m:
-                try:
-                    return json.loads(m.group(0))
-                except json.JSONDecodeError:
-                    return None
-            return None
-
-    @staticmethod
-    def _recompute_importance(llm_score: Any, cluster_size: int) -> float:
-        try:
-            base = float(llm_score)
-        except (TypeError, ValueError):
-            base = 5.0
-        base = max(1.0, min(10.0, base))
-        # Multi-source bonus: each extra source adds 0.3, cap at +2.0
-        bonus = min(2.0, max(0, cluster_size - 1) * 0.3)
-        return round(min(10.0, base * 0.7 + bonus + 1.5), 2)

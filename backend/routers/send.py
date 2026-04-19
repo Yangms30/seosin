@@ -1,21 +1,21 @@
-"""Manual send trigger. Day-3 will wire actual Slack/Email senders."""
-from fastapi import APIRouter, Depends, HTTPException
+"""Manual send trigger: dispatch user's latest reports through all channels."""
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Briefing, SendLog
-from schemas import SendResult
+from dispatcher import dispatch_user_reports
+from schemas import SendResponse, SendResult
 
 router = APIRouter()
 
 
-@router.post("/{briefing_id}", response_model=list[SendResult])
-def send_briefing(briefing_id: int, db: Session = Depends(get_db)):
-    b = db.query(Briefing).filter(Briefing.id == briefing_id).first()
-    if not b:
-        raise HTTPException(404, "Briefing not found")
-    # TODO Day-3: read Setting.channels and dispatch
-    log = SendLog(briefing_id=briefing_id, channel="web", status="success")
-    db.add(log)
-    db.commit()
-    return [SendResult(channel="web", status="success")]
+@router.post("", response_model=SendResponse)
+def send_now(user_id: int = Query(...), db: Session = Depends(get_db)):
+    try:
+        results = dispatch_user_reports(db, user_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    return SendResponse(
+        user_id=user_id,
+        results=[SendResult(channel=r.channel, status=r.status, error_msg=r.error_msg) for r in results],
+    )

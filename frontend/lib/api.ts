@@ -1,7 +1,9 @@
 import type {
-  Briefing,
+  Article,
+  GenerateProgressEvent,
   GenerateResult,
-  SendResult,
+  Report,
+  SendResponse,
   Setting,
   SettingPayload,
   User,
@@ -10,7 +12,7 @@ import type {
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
 
 const DEFAULT_TIMEOUT_MS = 15_000
-const GENERATE_TIMEOUT_MS = 60_000
+const GENERATE_TIMEOUT_MS = 120_000
 
 export class BriefBotApiError extends Error {
   readonly status: number
@@ -45,7 +47,6 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
-  // Bridge external signal
   if (signal) {
     if (signal.aborted) controller.abort()
     else signal.addEventListener("abort", () => controller.abort(), { once: true })
@@ -73,11 +74,94 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     throw new BriefBotApiError(res.status, detail)
   }
 
-  // 204 or empty body
   if (res.status === 204) return undefined as T
   const text = await res.text()
   if (!text) return undefined as T
   return JSON.parse(text) as T
+}
+
+// Stream Server-Sent Events from the given URL. Resolves on `done`, rejects on `error`
+// or transport failure. Parses one event per `data: {...}\n\n` frame (ignores comments).
+async function streamSSE<E extends { type: string }>(
+  url: string,
+  onEvent: (event: E) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "text/event-stream" },
+      signal,
+      cache: "no-store",
+    })
+  } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      throw new BriefBotApiError(0, "요청이 취소됐습니다")
+    }
+    throw new BriefBotApiError(0, `네트워크 오류: ${(err as Error).message}`)
+  }
+
+  if (!res.ok) {
+    const detail = await parseErrorDetail(res)
+    throw new BriefBotApiError(res.status, detail)
+  }
+  if (!res.body) {
+    throw new BriefBotApiError(0, "응답 스트림이 비어 있습니다")
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder("utf-8")
+  let buffer = ""
+  let terminated = false
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      // SSE frames are separated by a blank line.
+      let sepIndex: number
+      while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, sepIndex)
+        buffer = buffer.slice(sepIndex + 2)
+
+        const dataLines: string[] = []
+        for (const rawLine of frame.split("\n")) {
+          const line = rawLine.replace(/\r$/, "")
+          if (!line || line.startsWith(":")) continue // comment / heartbeat
+          if (line.startsWith("data:")) {
+            dataLines.push(line.slice(5).replace(/^ /, ""))
+          }
+        }
+        if (dataLines.length === 0) continue
+        const payload = dataLines.join("\n")
+        let event: E
+        try {
+          event = JSON.parse(payload) as E
+        } catch {
+          continue
+        }
+        onEvent(event)
+        if (event.type === "done") {
+          terminated = true
+        } else if (event.type === "error") {
+          const message =
+            (event as unknown as { message?: string }).message ?? "pipeline error"
+          throw new BriefBotApiError(500, message)
+        }
+      }
+
+      if (terminated) break
+    }
+  } finally {
+    try {
+      await reader.cancel()
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 async function parseErrorDetail(res: Response): Promise<string> {
@@ -85,7 +169,6 @@ async function parseErrorDetail(res: Response): Promise<string> {
     const data = await res.json()
     if (typeof data?.detail === "string") return data.detail
     if (Array.isArray(data?.detail)) {
-      // FastAPI validation errors: [{loc, msg, type}]
       return data.detail.map((d: { msg?: string }) => d.msg ?? "invalid").join("; ")
     }
     return JSON.stringify(data)
@@ -115,28 +198,43 @@ export const api = {
     },
   },
 
-  briefings: {
-    list(userId: number, opts: { category?: string; limit?: number } = {}): Promise<Briefing[]> {
-      return request<Briefing[]>("/api/briefings", {
+  reports: {
+    list(userId: number, opts: { category?: string; limit?: number } = {}): Promise<Report[]> {
+      return request<Report[]>("/api/reports", {
         query: { user_id: userId, category: opts.category, limit: opts.limit },
       })
     },
-    get(id: number): Promise<Briefing> {
-      return request<Briefing>(`/api/briefings/${id}`)
+    get(id: number): Promise<Report> {
+      return request<Report>(`/api/reports/${id}`)
+    },
+    getArticle(id: number): Promise<Article> {
+      return request<Article>(`/api/reports/articles/${id}`)
     },
     generate(userId: number, signal?: AbortSignal): Promise<GenerateResult> {
-      return request<GenerateResult>("/api/briefings/generate", {
+      return request<GenerateResult>("/api/reports/generate", {
         method: "POST",
         query: { user_id: userId },
         timeoutMs: GENERATE_TIMEOUT_MS,
         signal,
       })
     },
+    generateStream(
+      userId: number,
+      onEvent: (event: GenerateProgressEvent) => void,
+      signal?: AbortSignal,
+    ): Promise<void> {
+      const url = new URL("/api/reports/generate/stream", BASE_URL)
+      url.searchParams.set("user_id", String(userId))
+      return streamSSE(url.toString(), onEvent, signal)
+    },
   },
 
   send: {
-    dispatch(briefingId: number): Promise<SendResult[]> {
-      return request<SendResult[]>(`/api/send/${briefingId}`, { method: "POST" })
+    dispatch(userId: number): Promise<SendResponse> {
+      return request<SendResponse>("/api/send", {
+        method: "POST",
+        query: { user_id: userId },
+      })
     },
   },
 }

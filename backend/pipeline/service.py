@@ -1,21 +1,37 @@
-"""High-level orchestration: collect → preprocess → analyze → persist."""
+"""High-level orchestration: collect → cluster → pick top-3 → summarize each → synthesize radio → persist."""
 from __future__ import annotations
 import json
 import logging
+from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
 from config import get_settings
-from models import Briefing, Setting
+from models import Article, Report, Setting
 
-from .analyzer import GeminiAnalyzer
+from .analyzer import OpenAIAnalyzer
 from .collector import GoogleRSSClient
-from .preprocessor import cluster_articles
+from .preprocessor import cluster_articles, pick_top_articles
 
 logger = logging.getLogger(__name__)
 
+ProgressCallback = Callable[[dict[str, Any]], None]
 
-def generate_briefings_for_user(db: Session, user_id: int) -> list[Briefing]:
+
+def _emit(cb: ProgressCallback | None, event: dict[str, Any]) -> None:
+    if cb is None:
+        return
+    try:
+        cb(event)
+    except Exception:
+        logger.exception("progress callback raised; continuing")
+
+
+def generate_reports_for_user(
+    db: Session,
+    user_id: int,
+    on_progress: ProgressCallback | None = None,
+) -> list[Report]:
     cfg = get_settings()
     setting: Setting | None = db.query(Setting).filter(Setting.user_id == user_id).first()
     if not setting:
@@ -25,33 +41,85 @@ def generate_briefings_for_user(db: Session, user_id: int) -> list[Briefing]:
         return []
 
     collector = GoogleRSSClient(hours=cfg.ARTICLE_HOURS, per_category=cfg.COLLECT_PER_CATEGORY)
-    analyzer = GeminiAnalyzer()
+    analyzer = OpenAIAnalyzer()
 
-    created: list[Briefing] = []
-    for category in categories:
+    _emit(on_progress, {"type": "start", "categories": categories})
+
+    created: list[Report] = []
+    total = len(categories)
+    for idx, category in enumerate(categories, 1):
+        _emit(on_progress, {"type": "category_start", "category": category, "index": idx, "total": total})
+
         raw = collector.fetch(category)
+        _emit(on_progress, {"type": "collected", "category": category, "count": len(raw)})
         if not raw:
             logger.info("No articles for %s, skipping", category)
+            _emit(on_progress, {"type": "category_done", "category": category, "articles": 0})
             continue
+
         clusters = cluster_articles(raw, threshold=cfg.CLUSTER_THRESHOLD)
+        _emit(on_progress, {"type": "clustered", "category": category, "count": len(clusters)})
         if not clusters:
+            _emit(on_progress, {"type": "category_done", "category": category, "articles": 0})
             continue
-        analyzed = analyzer.analyze_clusters(category, clusters, top_k=3)
-        for a in analyzed:
-            briefing = Briefing(
-                user_id=user_id,
-                category=a.category,
-                title=a.title,
-                summary=a.summary,
-                radio_script=a.radio_script,
-                source_articles=json.dumps(a.source_articles, ensure_ascii=False),
-                importance_score=a.importance_score,
-                raw_analysis=json.dumps(a.raw_analysis, ensure_ascii=False),
+
+        top_articles = pick_top_articles(clusters, n=3)
+        if not top_articles:
+            _emit(on_progress, {"type": "category_done", "category": category, "articles": 0})
+            continue
+
+        summaries: list[str] = []
+        for a_idx, article in enumerate(top_articles, 1):
+            _emit(
+                on_progress,
+                {
+                    "type": "summarizing_article",
+                    "category": category,
+                    "article_index": a_idx,
+                    "article_total": len(top_articles),
+                    "article_title": article.title[:80],
+                },
             )
-            db.add(briefing)
-            created.append(briefing)
+            try:
+                s = analyzer.summarize_article(category, article)
+            except Exception as exc:
+                logger.exception("summarize failed for %s / %s: %s", category, article.title, exc)
+                s = article.summary or article.title
+            summaries.append(s)
+
+        _emit(on_progress, {"type": "synthesizing_radio", "category": category})
+        radio = None
+        try:
+            radio = analyzer.synthesize_radio(category, top_articles, summaries)
+        except Exception as exc:
+            logger.exception("radio synth failed for %s: %s", category, exc)
+
+        report = Report(user_id=user_id, category=category, radio_script=radio)
+        db.add(report)
+        db.flush()  # need report.id for articles
+
+        for article, s in zip(top_articles, summaries):
+            db.add(
+                Article(
+                    user_id=user_id,
+                    report_id=report.id,
+                    category=category,
+                    title=article.title[:500],
+                    summary=s,
+                    link=article.link,
+                    source=article.source,
+                    published_at=article.published,
+                )
+            )
+        created.append(report)
+        _emit(
+            on_progress,
+            {"type": "category_done", "category": category, "articles": len(top_articles)},
+        )
+
     db.commit()
-    for b in created:
-        db.refresh(b)
-    logger.info("Generated %d briefings for user_id=%d", len(created), user_id)
+    for r in created:
+        db.refresh(r)
+    logger.info("Generated %d reports for user_id=%d", len(created), user_id)
+    _emit(on_progress, {"type": "done", "generated": len(created)})
     return created

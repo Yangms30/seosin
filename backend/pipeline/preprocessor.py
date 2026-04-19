@@ -123,3 +123,45 @@ def _build_context(reps: list[RawArticle]) -> str:
         src = a.source or "출처 미상"
         parts.append(f"[기사{i} | {src}] {body}")
     return "\n".join(parts)
+
+
+def pick_top_articles(clusters: list[Cluster], n: int = 3) -> list[RawArticle]:
+    """Pick top-n individual articles across clusters with source diversity.
+
+    Strategy: iterate clusters by importance (already sorted by size desc),
+    take the cluster's first representative; prefer unseen sources. Fallback
+    to any remaining representative when we run out of unique sources.
+    """
+    if not clusters:
+        return []
+    seen_sources: set[str] = set()
+    picked: list[RawArticle] = []
+
+    # First pass: one article per cluster, prefer unseen source
+    for c in clusters:
+        if len(picked) >= n:
+            break
+        for m in c.members:
+            src = (m.source or "").strip()
+            if src and src in seen_sources:
+                continue
+            picked.append(m)
+            if src:
+                seen_sources.add(src)
+            break
+
+    # Second pass: fill up from remaining members if under n
+    if len(picked) < n:
+        seen_links = {a.link for a in picked}
+        for c in clusters:
+            for m in c.members:
+                if m.link in seen_links:
+                    continue
+                picked.append(m)
+                seen_links.add(m.link)
+                if len(picked) >= n:
+                    break
+            if len(picked) >= n:
+                break
+
+    return picked[:n]

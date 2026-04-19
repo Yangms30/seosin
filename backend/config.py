@@ -6,7 +6,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.0-flash"
+    GEMINI_MODEL: str = "gemini-2.5-flash-lite"
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-5-nano"
+    OPENAI_TTS_MODEL: str = "gpt-4o-mini-tts"
+    OPENAI_TTS_VOICE: str = "nova"
+    AUDIO_CACHE_DIR: str = "./media/audio"
     LLM_MAX_RETRIES: int = 2
 
     DATABASE_URL: str = "sqlite:///./briefbot.db"

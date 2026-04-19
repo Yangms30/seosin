@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
 import { motion } from "framer-motion"
 import { toast } from "sonner"
 import {
@@ -15,8 +14,6 @@ import {
   Landmark,
   Mail,
   Clock,
-  Trash2,
-  LogOut,
   Check,
   AlertTriangle,
   Loader2,
@@ -26,7 +23,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { api, BriefBotApiError } from "@/lib/api"
-import { clearUserId, getUserId } from "@/lib/storage"
+import { getUserId } from "@/lib/storage"
 import { KOREAN_TO_CATEGORY_ID, categoryIdsToKorean } from "@/lib/categories"
 import type { ChannelConfig } from "@/lib/types"
 
@@ -60,8 +57,7 @@ type EmailState = { enabled: boolean; address: string }
 type SlackState = { enabled: boolean; webhook: string }
 
 export default function SettingsPage() {
-  const router = useRouter()
-  const [userId, setUid] = useState<number | null>(null)
+  const userId = getUserId()
   const [userName, setUserName] = useState<string>("")
   const [userEmail, setUserEmail] = useState<string>("")
   const [loading, setLoading] = useState(true)
@@ -72,16 +68,6 @@ export default function SettingsPage() {
   const [slack, setSlack] = useState<SlackState>({ enabled: false, webhook: "" })
 
   useEffect(() => {
-    const id = getUserId()
-    if (!id) {
-      router.replace("/")
-      return
-    }
-    setUid(id)
-  }, [router])
-
-  useEffect(() => {
-    if (userId === null) return
     let cancelled = false
     ;(async () => {
       setLoading(true)
@@ -134,7 +120,7 @@ export default function SettingsPage() {
   }, [])
 
   const handleSave = async () => {
-    if (userId === null || saving) return
+    if (saving) return
     if (selectedCategories.length === 0) {
       toast.error("카테고리를 최소 1개 이상 선택해주세요.")
       return
@@ -165,12 +151,6 @@ export default function SettingsPage() {
     } finally {
       setSaving(false)
     }
-  }
-
-  const handleReset = () => {
-    if (!confirm("저장된 사용자 정보를 지우고 온보딩으로 돌아갈까요?")) return
-    clearUserId()
-    router.replace("/")
   }
 
   if (loading) {
@@ -374,42 +354,22 @@ export default function SettingsPage() {
           <section>
             <h2 className="mb-4 text-lg font-semibold">AI 모델</h2>
             <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
-              현재 Gemini Flash 모델을 사용합니다. (설정 변경 미지원)
+              현재 OpenAI gpt-5-nano 모델을 사용합니다. (설정 변경 미지원)
             </div>
           </section>
 
           <section>
             <h2 className="mb-4 text-lg font-semibold">계정</h2>
-            <div className="space-y-4">
-              <div className="rounded-xl border border-border bg-card p-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <Label className="text-sm text-muted-foreground">이름</Label>
-                    <p className="mt-1 font-medium">{userName}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm text-muted-foreground">이메일</Label>
-                    <p className="mt-1 font-medium">{userEmail}</p>
-                  </div>
+            <div className="rounded-xl border border-border bg-card p-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <Label className="text-sm text-muted-foreground">이름</Label>
+                  <p className="mt-1 font-medium">{userName}</p>
                 </div>
-              </div>
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <Button
-                  variant="outline"
-                  onClick={handleReset}
-                  className="gap-2 border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  데이터 초기화
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleReset}
-                  className="gap-2"
-                >
-                  <LogOut className="h-4 w-4" />
-                  로그아웃
-                </Button>
+                <div>
+                  <Label className="text-sm text-muted-foreground">이메일</Label>
+                  <p className="mt-1 font-medium">{userEmail}</p>
+                </div>
               </div>
             </div>
           </section>

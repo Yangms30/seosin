@@ -1,11 +1,7 @@
 import type { Metadata } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { Toaster } from 'sonner'
 import './globals.css'
-
-const _geist = Geist({ subsets: ["latin"] });
-const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: 'BriefBot - AI 뉴스 브리핑 서비스',
@@ -36,10 +32,10 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="ko" className="dark bg-background">
-      <body className="font-sans antialiased min-h-screen bg-gradient-to-b from-[#0a1628] to-[#030712]">
+    <html lang="ko" className="bg-background">
+      <body className="font-sans antialiased min-h-screen bg-gradient-to-b from-white to-[#fff5ef]">
         {children}
-        <Toaster position="top-center" richColors theme="dark" />
+        <Toaster position="top-center" richColors theme="light" />
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>

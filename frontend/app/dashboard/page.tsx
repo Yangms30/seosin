@@ -1,113 +1,152 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { DashboardHeader } from "@/components/dashboard/dashboard-header"
 import { RadioPlayerBar } from "@/components/dashboard/radio-player-bar"
 import { QuickActions } from "@/components/dashboard/quick-actions"
-import { BriefingGrid } from "@/components/dashboard/briefing-grid"
+import { CategoryReportGrid } from "@/components/dashboard/category-report-grid"
+import { GenerationProgressPanel } from "@/components/dashboard/generation-progress-panel"
 import { Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { api, BriefBotApiError } from "@/lib/api"
 import { getUserId } from "@/lib/storage"
-import type { Briefing } from "@/lib/types"
+import type { GenerateProgressEvent, Report, Setting } from "@/lib/types"
 
 const categories = ["전체", "정치", "경제", "사회", "국제", "스포츠", "IT/과학"]
-const dateFilters = ["오늘", "어제", "이번주"]
-
-function withinDateFilter(createdAt: string, filter: string, now: Date = new Date()): boolean {
-  const t = new Date(createdAt).getTime()
-  if (Number.isNaN(t)) return true
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const oneDay = 24 * 60 * 60 * 1000
-  if (filter === "오늘") return t >= startOfToday
-  if (filter === "어제") return t >= startOfToday - oneDay && t < startOfToday
-  if (filter === "이번주") return t >= startOfToday - 6 * oneDay
-  return true
-}
 
 export default function DashboardPage() {
-  const router = useRouter()
-  const [userId, setUid] = useState<number | null>(null)
-  const [briefings, setBriefings] = useState<Briefing[]>([])
+  const userId = getUserId()
+  const [reports, setReports] = useState<Report[]>([])
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
+  const [sending, setSending] = useState(false)
   const [selectedCategory, setSelectedCategory] = useState("전체")
-  const [selectedDate, setSelectedDate] = useState("오늘")
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [currentTime, setCurrentTime] = useState(0)
-  const [volume, setVolume] = useState(75)
   const [isExpanded, setIsExpanded] = useState(true)
+  const [pendingPlay, setPendingPlay] = useState<string | null>(null)
+  const [playingCategory, setPlayingCategory] = useState<string | null>(null)
+  const [progressEvents, setProgressEvents] = useState<GenerateProgressEvent[]>([])
+  const [setting, setSetting] = useState<Setting | null>(null)
 
-  useEffect(() => {
-    const id = getUserId()
-    if (!id) {
-      router.replace("/")
-      return
+  const fetchList = useCallback(async (id: number) => {
+    try {
+      const list = await api.reports.list(id)
+      setReports(list)
+    } catch (err) {
+      const detail = err instanceof BriefBotApiError ? err.detail : (err as Error).message
+      toast.error(`리포트 목록 로딩 실패: ${detail}`)
+    } finally {
+      setLoading(false)
     }
-    setUid(id)
-  }, [router])
-
-  const fetchList = useCallback(
-    async (id: number) => {
-      try {
-        const list = await api.briefings.list(id)
-        setBriefings(list)
-      } catch (err) {
-        const detail = err instanceof BriefBotApiError ? err.detail : (err as Error).message
-        toast.error(`브리핑 목록 로딩 실패: ${detail}`)
-      } finally {
-        setLoading(false)
-      }
-    },
-    []
-  )
+  }, [])
 
   useEffect(() => {
-    if (userId === null) return
     setLoading(true)
     void fetchList(userId)
+    // Fetch current setting once so handleGenerate can announce which channels will receive.
+    api.settings
+      .get(userId)
+      .then(setSetting)
+      .catch(() => {
+        // Non-fatal: chaining will just fall back to generic labels.
+      })
   }, [userId, fetchList])
 
   const handleGenerate = async () => {
-    if (userId === null || generating) return
+    if (generating) return
     setGenerating(true)
+    setProgressEvents([])
     try {
-      await toast.promise(api.briefings.generate(userId), {
-        loading: "브리핑 생성 중입니다. 최대 1분 정도 걸려요…",
-        success: (res) => `${res.generated}건의 브리핑이 생성됐습니다.`,
-        error: (err) =>
-          err instanceof BriefBotApiError
-            ? `생성 실패: ${err.detail}`
-            : `생성 실패: ${(err as Error).message}`,
-      }).unwrap()
+      await api.reports.generateStream(userId, (event) => {
+        setProgressEvents((prev) => [...prev, event])
+      })
       await fetchList(userId)
-    } catch {
-      // toast already reported
+
+      // Auto-dispatch: once reports exist, push them to configured channels.
+      const channelLabels = activeChannelLabels(setting)
+      setProgressEvents((prev) => [
+        ...prev,
+        { type: "dispatching", channels: channelLabels },
+      ])
+      try {
+        const res = await api.send.dispatch(userId)
+        setProgressEvents((prev) => [
+          ...prev,
+          { type: "dispatched", results: res.results },
+        ])
+        const total = res.results.length
+        if (total === 0) {
+          toast.success("리포트 생성 완료 · 활성화된 외부 채널 없음")
+        } else {
+          const ok = res.results.filter((r) => r.status === "success").length
+          toast.success(`리포트 생성 완료 · ${ok}/${total} 채널 발송`)
+        }
+      } catch (err) {
+        const detail =
+          err instanceof BriefBotApiError ? err.detail : (err as Error).message
+        setProgressEvents((prev) => [
+          ...prev,
+          { type: "error", message: `메일 발송 실패: ${detail}` },
+        ])
+        toast.error(
+          `메일 발송 실패: ${detail} (대시보드에는 리포트가 저장됐습니다)`,
+        )
+      }
+
+      setTimeout(() => setProgressEvents([]), 4000)
+    } catch (err) {
+      const detail =
+        err instanceof BriefBotApiError ? err.detail : (err as Error).message
+      toast.error(`생성 실패: ${detail}`)
+      setProgressEvents((prev) => [
+        ...prev,
+        { type: "error", message: detail },
+      ])
     } finally {
       setGenerating(false)
     }
   }
 
-  const filtered = briefings
-    .filter((b) => selectedCategory === "전체" || b.category === selectedCategory)
-    .filter((b) => withinDateFilter(b.created_at, selectedDate))
+  const handleSend = async () => {
+    if (sending) return
+    setSending(true)
+    try {
+      await toast.promise(api.send.dispatch(userId), {
+        loading: "메일/슬랙 발송 중…",
+        success: (res) => {
+          const ok = res.results.filter((r) => r.status === "success").length
+          const total = res.results.length
+          if (total === 0) return "활성화된 채널이 없습니다."
+          return `${ok}/${total} 채널 발송 완료`
+        },
+        error: (err) =>
+          err instanceof BriefBotApiError
+            ? `발송 실패: ${err.detail}`
+            : `발송 실패: ${(err as Error).message}`,
+      }).unwrap()
+    } catch {
+      // toast already reported
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const filtered = useMemo(
+    () => (selectedCategory === "전체" ? reports : reports.filter((r) => r.category === selectedCategory)),
+    [reports, selectedCategory]
+  )
 
   return (
     <div className="min-h-screen">
       <DashboardHeader />
 
       <RadioPlayerBar
-        isPlaying={isPlaying}
-        setIsPlaying={setIsPlaying}
-        currentTime={currentTime}
-        setCurrentTime={setCurrentTime}
-        totalTime={495}
-        volume={volume}
-        setVolume={setVolume}
+        reports={reports}
         isExpanded={isExpanded}
         setIsExpanded={setIsExpanded}
+        externalCategory={pendingPlay}
+        onExternalConsumed={() => setPendingPlay(null)}
+        onPlayingCategoryChange={setPlayingCategory}
       />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-12">
@@ -115,25 +154,45 @@ export default function DashboardPage() {
           categories={categories}
           selectedCategory={selectedCategory}
           setSelectedCategory={setSelectedCategory}
-          dateFilters={dateFilters}
-          selectedDate={selectedDate}
-          setSelectedDate={setSelectedDate}
           onGenerate={handleGenerate}
           generating={generating}
+          onSend={handleSend}
+          sending={sending}
+          hasReports={reports.length > 0}
         />
+
+        <GenerationProgressPanel events={progressEvents} isRunning={generating} />
 
         {loading ? (
           <div className="py-20 text-center text-muted-foreground">
-            브리핑을 불러오는 중입니다…
+            리포트를 불러오는 중입니다…
           </div>
         ) : filtered.length === 0 ? (
-          <EmptyState onGenerate={handleGenerate} generating={generating} hasAny={briefings.length > 0} />
+          <EmptyState onGenerate={handleGenerate} generating={generating} hasAny={reports.length > 0} />
         ) : (
-          <BriefingGrid briefings={filtered} />
+          <CategoryReportGrid
+            reports={filtered}
+            playingCategory={playingCategory}
+            onPlayCategory={(cat) => setPendingPlay(cat)}
+            onPauseCategory={() => {
+              if (typeof window !== "undefined" && "speechSynthesis" in window) {
+                window.speechSynthesis.pause()
+              }
+              setPlayingCategory(null)
+            }}
+          />
         )}
       </main>
     </div>
   )
+}
+
+function activeChannelLabels(setting: Setting | null): string[] {
+  if (!setting) return []
+  const out: string[] = []
+  if (setting.channels.email) out.push("이메일")
+  if (setting.channels.slack) out.push("Slack")
+  return out
 }
 
 function EmptyState({
@@ -149,13 +208,13 @@ function EmptyState({
     <div className="py-20 text-center space-y-4">
       <p className="text-muted-foreground">
         {hasAny
-          ? "선택한 필터 조건에 해당하는 브리핑이 없습니다."
-          : "아직 브리핑이 없어요. 첫 브리핑을 생성해 보세요."}
+          ? "선택한 필터 조건에 해당하는 리포트가 없습니다."
+          : "아직 리포트가 없어요. 첫 리포트를 생성해 보세요."}
       </p>
       {!hasAny && (
         <Button onClick={onGenerate} disabled={generating} size="lg" className="gap-2">
           <Sparkles className="w-5 h-5" />
-          지금 브리핑 받기
+          지금 리포트 받기
         </Button>
       )}
     </div>

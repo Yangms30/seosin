@@ -33,39 +33,31 @@ export type Category = "정치" | "경제" | "사회" | "국제" | "스포츠" |
 
 export const CATEGORIES: Category[] = ["정치", "경제", "사회", "국제", "스포츠", "IT/과학"]
 
-export type Sentiment = "positive" | "neutral" | "negative"
-
-export type SourceArticle = {
-  title: string
-  url: string
-  source: string | null
-}
-
-export type RawAnalysis = {
-  topic?: string
-  key_entities?: string[]
-  core_fact?: string
-  sentiment?: Sentiment
-  importance_score?: number
-} & Record<string, unknown>
-
-export type Briefing = {
+export type Article = {
   id: number
-  user_id: number
+  report_id: number
   category: string
   title: string
   summary: string
-  radio_script: string | null
-  source_articles: SourceArticle[]
-  importance_score: number | null
-  raw_analysis: RawAnalysis | null
+  link: string
+  source: string | null
+  published_at: string | null
   created_at: string
+}
+
+export type Report = {
+  id: number
+  user_id: number
+  category: string
+  radio_script: string | null
+  created_at: string
+  articles: Article[]
 }
 
 export type GenerateResult = {
   user_id: number
   generated: number
-  briefings: Briefing[]
+  reports: Report[]
 }
 
 export type SendResult = {
@@ -73,3 +65,29 @@ export type SendResult = {
   status: string
   error_msg?: string | null
 }
+
+export type SendResponse = {
+  user_id: number
+  results: SendResult[]
+}
+
+// SSE events pushed by GET /api/reports/generate/stream.
+export type GenerateProgressEvent =
+  | { type: "start"; categories: string[] }
+  | { type: "category_start"; category: string; index: number; total: number }
+  | { type: "collected"; category: string; count: number }
+  | { type: "clustered"; category: string; count: number }
+  | {
+      type: "summarizing_article"
+      category: string
+      article_index: number
+      article_total: number
+      article_title: string
+    }
+  | { type: "synthesizing_radio"; category: string }
+  | { type: "category_done"; category: string; articles: number }
+  | { type: "done"; generated: number }
+  // Client-side only: pushed after the server SSE finishes, during auto-dispatch chaining.
+  | { type: "dispatching"; channels: string[] }
+  | { type: "dispatched"; results: SendResult[] }
+  | { type: "error"; message: string }

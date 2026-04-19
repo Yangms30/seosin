@@ -34,31 +34,34 @@ class SettingOut(BaseModel):
     updated_at: datetime
 
 
-# ---------- Briefing ----------
-class SourceArticle(BaseModel):
+# ---------- Article / Report ----------
+class ArticleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    report_id: int
+    category: str
     title: str
-    url: str
-    source: str | None = None
+    summary: str
+    link: str
+    source: str | None
+    published_at: datetime | None
+    created_at: datetime
 
 
-class BriefingOut(BaseModel):
+class ReportOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     user_id: int
     category: str
-    title: str
-    summary: str
     radio_script: str | None
-    source_articles: list[SourceArticle]
-    importance_score: float | None
-    raw_analysis: dict[str, Any] | None
     created_at: datetime
+    articles: list[ArticleOut]
 
 
-class BriefingGenerateResponse(BaseModel):
+class ReportGenerateResponse(BaseModel):
     user_id: int
     generated: int
-    briefings: list[BriefingOut]
+    reports: list[ReportOut]
 
 
 # ---------- Send ----------
@@ -66,3 +69,8 @@ class SendResult(BaseModel):
     channel: str
     status: str
     error_msg: str | None = None
+
+
+class SendResponse(BaseModel):
+    user_id: int
+    results: list[SendResult]

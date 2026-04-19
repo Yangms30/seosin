@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Setting, User
+from scheduler import upsert_user_job
 from schemas import SettingOut, SettingPayload
 
 router = APIRouter()
@@ -41,6 +42,7 @@ def upsert_settings(user_id: int, payload: SettingPayload, db: Session = Depends
         db.add(setting)
     db.commit()
     db.refresh(setting)
+    upsert_user_job(user_id, setting.schedule_cron)
     return _to_out(setting)
 
 
