@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { motion } from "framer-motion"
 import { toast } from "sonner"
 import {
@@ -57,6 +58,7 @@ type EmailState = { enabled: boolean; address: string }
 type SlackState = { enabled: boolean; webhook: string }
 
 export default function SettingsPage() {
+  const router = useRouter()
   const userId = getUserId()
   const [userName, setUserName] = useState<string>("")
   const [userEmail, setUserEmail] = useState<string>("")
@@ -146,8 +148,9 @@ export default function SettingsPage() {
               : `저장 실패: ${(err as Error).message}`,
         }
       ).unwrap()
+      router.push("/dashboard")
     } catch {
-      // toast already reported
+      // toast already reported; stay on page so user can retry
     } finally {
       setSaving(false)
     }
