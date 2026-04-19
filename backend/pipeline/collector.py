@@ -2,6 +2,7 @@
 from __future__ import annotations
 import logging
 import re
+import time
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone
 from time import mktime
@@ -52,21 +53,49 @@ def _parse_published(entry) -> datetime | None:
 
 
 class GoogleRSSClient:
-    def __init__(self, hours: int = 24, per_category: int = 20, timeout: float = 10.0):
+    def __init__(
+        self,
+        hours: int = 24,
+        per_category: int = 20,
+        timeout: float = 20.0,
+        max_attempts: int = 3,
+        backoff_base: float = 1.0,
+    ):
         self.hours = hours
         self.per_category = per_category
         self.timeout = timeout
+        self.max_attempts = max_attempts
+        self.backoff_base = backoff_base
 
     def fetch(self, category: str) -> list[RawArticle]:
         query = CATEGORY_QUERIES.get(category, category)
         url = RSS_TEMPLATE.format(query=quote_plus(query))
-        try:
-            with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
-                resp = client.get(url, headers={"User-Agent": "Mozilla/5.0 BriefBot/0.1"})
-                resp.raise_for_status()
-                feed = feedparser.parse(resp.content)
-        except Exception as exc:
-            logger.warning("RSS fetch failed for %s: %s", category, exc)
+        # Google News RSS occasionally times out or drops slow queries. A single
+        # 10s attempt was too fragile (1/6 success rate in a real run), so try
+        # up to `max_attempts` times with linear backoff. Still degrades to
+        # "return []" on total failure so the rest of the pipeline is unaffected.
+        feed = None
+        last_err: Exception | None = None
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
+                    resp = client.get(url, headers={"User-Agent": "Mozilla/5.0 BriefBot/0.1"})
+                    resp.raise_for_status()
+                    feed = feedparser.parse(resp.content)
+                break
+            except Exception as exc:
+                last_err = exc
+                logger.warning(
+                    "RSS fetch failed for %s (attempt %d/%d): %s",
+                    category,
+                    attempt,
+                    self.max_attempts,
+                    exc,
+                )
+                if attempt < self.max_attempts:
+                    time.sleep(self.backoff_base * attempt)
+        if feed is None:
+            logger.warning("RSS giving up on %s after %d attempts: %s", category, self.max_attempts, last_err)
             return []
 
         cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=self.hours)
