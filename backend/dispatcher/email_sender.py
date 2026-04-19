@@ -1,4 +1,11 @@
-"""Email sender: one comprehensive email with all category reports."""
+"""Email sender: one comprehensive email with all category reports.
+
+The email body carries the text content (HTML + plain-text alternative),
+and each report's radio script is synthesized to mp3 (OpenAI gpt-4o-mini-tts)
+and attached so the recipient can listen on-the-go without opening the web
+app. Synthesis failures degrade gracefully: that category's mp3 is skipped
+but the text email still goes out.
+"""
 from __future__ import annotations
 import logging
 import smtplib
@@ -8,8 +15,25 @@ from html import escape
 
 from config import get_settings
 from models import Report
+from services.tts import TTSUnavailable, synthesize_to_file
 
 logger = logging.getLogger(__name__)
+
+
+# Filesystem-safe mapping for Korean category names used as mp3 filenames.
+_FILENAME_SAFE: dict[str, str] = {
+    "정치": "politics",
+    "경제": "economy",
+    "사회": "society",
+    "국제": "international",
+    "스포츠": "sports",
+    "IT/과학": "it-science",
+}
+
+
+def _mp3_filename(report: Report) -> str:
+    slug = _FILENAME_SAFE.get(report.category) or "category"
+    return f"briefbot-{slug}-{report.id}.mp3"
 
 
 def _render_report_section(report: Report) -> str:
@@ -37,15 +61,24 @@ def _render_report_section(report: Report) -> str:
     """
 
 
-def _render_html(user_name: str, reports: list[Report]) -> str:
+def _render_html(user_name: str, reports: list[Report], audio_count: int) -> str:
     sections = "".join(_render_report_section(r) for r in reports)
     title = escape(user_name) + "님, 오늘의 브리프봇 리포트입니다"
+    audio_badge = (
+        f"""
+    <div style="display:inline-block;margin-top:10px;padding:6px 14px;background:#fff7f0;color:#9a3412;border:1px solid #fde4d1;border-radius:999px;font-size:12px;font-weight:600">
+      🎧 분야별 라디오 mp3 {audio_count}건이 이 메일에 첨부되어 있습니다
+    </div>"""
+        if audio_count > 0
+        else ""
+    )
     return f"""<!doctype html>
 <html lang="ko"><body style="margin:0;padding:24px;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Pretendard','Segoe UI',sans-serif">
   <div style="max-width:680px;margin:0 auto;background:#fff;border-radius:14px;padding:32px;border:1px solid #e5e7eb">
     <div style="font-size:12px;color:#f26930;letter-spacing:0.12em;font-weight:700;text-transform:uppercase">BriefBot</div>
     <h1 style="margin:10px 0 4px;font-size:24px;line-height:1.35;color:#111827">{title}</h1>
     <div style="font-size:13px;color:#6b7280">분야 {len(reports)}개 · 기사 {sum(len(r.articles) for r in reports)}건</div>
+    {audio_badge}
     <hr style="border:none;border-top:1px solid #f3f4f6;margin:20px 0 0">
     {sections}
     <hr style="border:none;border-top:1px solid #e5e7eb;margin:32px 0 16px">
@@ -71,6 +104,34 @@ def _render_text(user_name: str, reports: list[Report]) -> str:
     return "\n".join(lines)
 
 
+def _synthesize_audio_for_reports(
+    reports: list[Report],
+) -> list[tuple[Report, bytes]]:
+    """Return (report, mp3_bytes) pairs for each report that produced audio.
+
+    Skips reports without a radio_script and any whose TTS call fails so the
+    rest of the email still goes through.
+    """
+    results: list[tuple[Report, bytes]] = []
+    for r in reports:
+        if not (r.radio_script or "").strip():
+            continue
+        try:
+            path = synthesize_to_file(r)
+        except TTSUnavailable as exc:
+            logger.warning("email: TTS unavailable for report_id=%s: %s", r.id, exc)
+            continue
+        except Exception as exc:
+            logger.exception("email: TTS synthesis error for report_id=%s: %s", r.id, exc)
+            continue
+        try:
+            with open(path, "rb") as f:
+                results.append((r, f.read()))
+        except OSError as exc:
+            logger.warning("email: failed to read mp3 %s: %s", path, exc)
+    return results
+
+
 class EmailSender:
     @staticmethod
     def send(to_email: str, user_name: str, reports: list[Report]) -> tuple[str, str | None]:
@@ -82,17 +143,35 @@ class EmailSender:
         if not reports:
             return "skipped", "no reports to send"
 
+        # Synthesize audio first so the HTML body can accurately state the
+        # attachment count (or skip the badge if all synthesis failed).
+        audio_pairs = _synthesize_audio_for_reports(reports)
+        audio_count = len(audio_pairs)
+
         msg = EmailMessage()
         cats = ", ".join(r.category for r in reports)
         msg["Subject"] = f"[BriefBot] 오늘의 리포트 ({cats})"
         msg["From"] = cfg.SMTP_FROM or cfg.SMTP_USER
         msg["To"] = to_email
         msg.set_content(_render_text(user_name, reports))
-        msg.add_alternative(_render_html(user_name, reports), subtype="html")
+        msg.add_alternative(_render_html(user_name, reports, audio_count), subtype="html")
+
+        for r, data in audio_pairs:
+            msg.add_attachment(
+                data,
+                maintype="audio",
+                subtype="mpeg",
+                filename=_mp3_filename(r),
+            )
+        logger.info(
+            "email: prepared %d mp3 attachments out of %d reports",
+            audio_count,
+            len(reports),
+        )
 
         ctx = ssl.create_default_context()
         try:
-            with smtplib.SMTP(cfg.SMTP_HOST, cfg.SMTP_PORT, timeout=15) as smtp:
+            with smtplib.SMTP(cfg.SMTP_HOST, cfg.SMTP_PORT, timeout=60) as smtp:
                 smtp.ehlo()
                 smtp.starttls(context=ctx)
                 smtp.login(cfg.SMTP_USER, cfg.SMTP_PASSWORD)
