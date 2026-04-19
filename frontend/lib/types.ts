@@ -111,7 +111,15 @@ export type GenerateProgressEvent =
       article_title: string
     }
   | { type: "synthesizing_radio"; category: string }
-  | { type: "category_done"; category: string; articles: number }
+  | {
+      type: "category_done"
+      category: string
+      articles: number
+      // Present when at least one article was synthesized for this category.
+      // The frontend appends this to the dashboard state immediately so the
+      // user can view / play the radio without waiting for the full batch.
+      report?: Report
+    }
   | { type: "done"; generated: number }
   // Client-side only: pushed after the server SSE finishes, during auto-dispatch chaining.
   | { type: "dispatching"; channels: string[] }

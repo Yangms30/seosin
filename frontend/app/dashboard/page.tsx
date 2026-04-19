@@ -60,6 +60,18 @@ export default function DashboardPage() {
     try {
       await api.reports.generateStream(userId, (event) => {
         setProgressEvents((prev) => [...prev, event])
+        // Incremental rendering: as soon as a category finishes and the server
+        // ships its fully-realized Report, insert it into the grid so the user
+        // can read / listen to that category without waiting for the whole
+        // batch. Any older report for the same category is replaced — the
+        // dashboard is a "latest per category" view.
+        if (event.type === "category_done" && event.report) {
+          const fresh = event.report
+          setReports((prev) => {
+            const others = prev.filter((r) => r.category !== fresh.category)
+            return [fresh, ...others]
+          })
+        }
       })
       await fetchList(userId)
 

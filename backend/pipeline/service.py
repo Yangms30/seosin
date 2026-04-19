@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from config import get_settings
 from models import Article, Report, Setting
+from schemas import ReportOut
 
 from .analyzer import OpenAIAnalyzer
 from .collector import GoogleRSSClient
@@ -111,15 +112,24 @@ def generate_reports_for_user(
                     published_at=article.published,
                 )
             )
+        # Commit this category immediately so that:
+        #   1) downstream sessions (dashboard polling, dispatcher) see the row
+        #   2) the SSE stream can ship the fully-realized report to the client,
+        #      letting the UI render + enable playback one category at a time
+        #      instead of waiting for the whole batch.
+        db.commit()
+        db.refresh(report)
         created.append(report)
         _emit(
             on_progress,
-            {"type": "category_done", "category": category, "articles": len(top_articles)},
+            {
+                "type": "category_done",
+                "category": category,
+                "articles": len(top_articles),
+                "report": ReportOut.model_validate(report).model_dump(mode="json"),
+            },
         )
 
-    db.commit()
-    for r in created:
-        db.refresh(r)
     logger.info("Generated %d reports for user_id=%d", len(created), user_id)
     _emit(on_progress, {"type": "done", "generated": len(created)})
     return created
