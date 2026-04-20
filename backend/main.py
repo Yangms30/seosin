@@ -10,9 +10,11 @@ import models  # noqa: F401  ensure models are registered with Base
 from models import Setting, User
 from routers import dispatches, reports, send, settings as settings_router, users
 
-# Scheduler is disabled for the demo window (prevents unbudgeted LLM spend).
-# Re-enable by uncommenting the import and lifespan calls below.
-# from scheduler import start_scheduler, stop_scheduler
+# Scheduler: APScheduler cron jobs per user. Enabled for submission rehearsal.
+# (Was temporarily disabled during early Day-5 development to keep an eye
+# on cost while iterating on the LLM side; re-enabled now that the per-user
+# TTS engine setting lets the user pick the cheap provider for rehearsals.)
+from scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -83,12 +85,11 @@ def _ensure_demo_user() -> None:
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     _ensure_demo_user()
-    # start_scheduler()
+    start_scheduler()
     try:
         yield
     finally:
-        # stop_scheduler()
-        pass
+        stop_scheduler()
 
 
 app = FastAPI(title="서신 · 書信 API — 오늘의 AI 뉴스 편지", version="0.2.0", lifespan=lifespan)
