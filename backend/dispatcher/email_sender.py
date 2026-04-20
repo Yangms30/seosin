@@ -75,14 +75,19 @@ def _render_html(user_name: str, reports: list[Report], audio_count: int) -> str
     return f"""<!doctype html>
 <html lang="ko"><body style="margin:0;padding:24px;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Pretendard','Segoe UI',sans-serif">
   <div style="max-width:680px;margin:0 auto;background:#fff;border-radius:14px;padding:32px;border:1px solid #e5e7eb">
-    <div style="font-size:12px;color:#f26930;letter-spacing:0.16em;font-weight:700">서신</div>
-    <h1 style="margin:10px 0 4px;font-size:24px;line-height:1.35;color:#111827">{title}</h1>
+    <div style="display:inline-block;padding:8px 16px;background:#fff7f0;border:1px solid #fde4d1;border-radius:10px;margin-bottom:16px">
+      <div style="font-size:15px;color:#f26930;font-weight:700;letter-spacing:0.04em;line-height:1.1">
+        서신 <span style="color:rgba(242,105,48,0.7);font-weight:600;font-size:13px">書信</span>
+      </div>
+      <div style="font-size:11px;color:#9a3412;margin-top:2px">오늘의 AI 뉴스 편지</div>
+    </div>
+    <h1 style="margin:4px 0 4px;font-size:24px;line-height:1.35;color:#111827">{title}</h1>
     <div style="font-size:13px;color:#6b7280">분야 {len(reports)}개 · 기사 {sum(len(r.articles) for r in reports)}건</div>
     {audio_badge}
     <hr style="border:none;border-top:1px solid #f3f4f6;margin:20px 0 0">
     {sections}
     <hr style="border:none;border-top:1px solid #e5e7eb;margin:32px 0 16px">
-    <div style="font-size:11px;color:#9ca3af">서신 — 가벼운 LLM으로 똑똑하게</div>
+    <div style="font-size:11px;color:#9ca3af">서신 · 書信 — 가벼운 LLM으로 똑똑하게</div>
   </div>
 </body></html>"""
 

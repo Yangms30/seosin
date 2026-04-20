@@ -91,7 +91,7 @@ async def lifespan(app: FastAPI):
         pass
 
 
-app = FastAPI(title="서신 API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="서신 · 書信 API — 오늘의 AI 뉴스 편지", version="0.2.0", lifespan=lifespan)
 
 cfg = get_settings()
 app.add_middleware(

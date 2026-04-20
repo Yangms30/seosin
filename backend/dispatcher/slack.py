@@ -15,7 +15,7 @@ def _build_blocks(user_name: str, reports: list[Report]) -> list[dict]:
     blocks: list[dict] = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": f"[서신] {user_name}님의 오늘의 리포트"[:150]},
+            "text": {"type": "plain_text", "text": f"[서신 · 書信] {user_name}님의 오늘의 리포트"[:150]},
         },
         {
             "type": "context",
@@ -53,7 +53,7 @@ class SlackSender:
         if not reports:
             return "skipped", "no reports to send"
         payload = {
-            "text": f"[서신] {user_name}님의 오늘의 리포트",
+            "text": f"[서신 · 書信] {user_name}님의 오늘의 리포트",
             "blocks": _build_blocks(user_name, reports),
         }
         try:

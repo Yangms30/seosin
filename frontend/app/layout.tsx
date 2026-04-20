@@ -4,8 +4,8 @@ import { Toaster } from 'sonner'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: '서신 - AI 뉴스 브리핑 서비스',
-  description: 'AI가 매일 핵심 뉴스를 브리핑해드립니다',
+  title: '서신 · 書信 — 오늘의 AI 뉴스 편지',
+  description: 'AI가 큐레이션한 오늘의 뉴스를 한 통의 편지로 받아보세요',
   generator: 'v0.app',
   icons: {
     icon: [

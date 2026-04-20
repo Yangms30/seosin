@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Archive, Settings, User as UserIcon } from "lucide-react"
+import { Archive, Mail, Settings, User as UserIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { api, BriefBotApiError } from "@/lib/api"
 import { getUserId } from "@/lib/storage"
@@ -34,25 +34,19 @@ export function DashboardHeader() {
     <header className="sticky top-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          {/* Logo */}
+          {/* Logo: envelope icon + wordmark (한자 병기) + tagline */}
           <Link href="/dashboard" className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-primary/20">
-              <svg
-                viewBox="0 0 24 24"
-                className="w-6 h-6 text-primary"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path d="M4 4h16v16H4z" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M4 8h16" strokeLinecap="round" />
-                <path d="M8 4v4" strokeLinecap="round" />
-                <circle cx="12" cy="14" r="2" fill="currentColor" stroke="none" />
-                <path d="M10 14h-2" strokeLinecap="round" />
-                <path d="M16 14h-2" strokeLinecap="round" />
-              </svg>
+            <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-primary/15 border border-primary/20">
+              <Mail className="w-5 h-5 text-primary" strokeWidth={2} />
             </div>
-            <span className="text-xl font-bold text-foreground">서신</span>
+            <div className="flex flex-col leading-tight">
+              <span className="text-lg font-bold text-foreground tracking-tight">
+                서신 <span className="text-primary/80 font-semibold text-base">書信</span>
+              </span>
+              <span className="text-[11px] text-muted-foreground mt-0.5">
+                오늘의 AI 뉴스 편지
+              </span>
+            </div>
           </Link>
 
           {/* User section */}
