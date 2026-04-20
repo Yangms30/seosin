@@ -9,7 +9,15 @@ export type User = {
 
 export type ChannelConfig = {
   web?: boolean
+  /**
+   * Legacy Slack Incoming Webhook URL (text-only, no audio upload).
+   * Use `slack_bot_token` + `slack_channel_id` for audio support.
+   */
   slack?: string
+  /** Slack Bot User OAuth Token ("xoxb-..."), enables audio upload via files.upload_v2. */
+  slack_bot_token?: string
+  /** Slack channel id (e.g. "C01234567") — required alongside slack_bot_token. */
+  slack_channel_id?: string
   email?: string
 }
 

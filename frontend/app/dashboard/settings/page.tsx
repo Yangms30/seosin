@@ -55,7 +55,14 @@ function timeToCron(time: string): string {
 }
 
 type EmailState = { enabled: boolean; address: string }
-type SlackState = { enabled: boolean; webhook: string }
+type SlackMode = "webhook" | "bot"
+type SlackState = {
+  enabled: boolean
+  mode: SlackMode
+  webhook: string
+  botToken: string
+  channelId: string
+}
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -67,7 +74,13 @@ export default function SettingsPage() {
   const [selectedCategories, setSelectedCategories] = useState<string[]>([])
   const [time, setTime] = useState<string>("08:00")
   const [email, setEmail] = useState<EmailState>({ enabled: false, address: "" })
-  const [slack, setSlack] = useState<SlackState>({ enabled: false, webhook: "" })
+  const [slack, setSlack] = useState<SlackState>({
+    enabled: false,
+    mode: "bot",
+    webhook: "",
+    botToken: "",
+    channelId: "",
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -96,10 +109,18 @@ export default function SettingsPage() {
             enabled: !!setting.channels.email,
             address: setting.channels.email ?? user.email,
           })
-          setSlack({
-            enabled: !!setting.channels.slack,
-            webhook: setting.channels.slack ?? "",
-          })
+          {
+            const ch = setting.channels
+            const hasBot = !!(ch.slack_bot_token && ch.slack_channel_id)
+            const hasWebhook = !!ch.slack
+            setSlack({
+              enabled: hasBot || hasWebhook,
+              mode: hasBot ? "bot" : hasWebhook ? "webhook" : "bot",
+              webhook: ch.slack ?? "",
+              botToken: ch.slack_bot_token ?? "",
+              channelId: ch.slack_channel_id ?? "",
+            })
+          }
         } else {
           setEmail({ enabled: false, address: user.email })
         }
@@ -129,7 +150,16 @@ export default function SettingsPage() {
     }
     const channels: ChannelConfig = { web: true }
     if (email.enabled && email.address.trim()) channels.email = email.address.trim()
-    if (slack.enabled && slack.webhook.trim()) channels.slack = slack.webhook.trim()
+    if (slack.enabled) {
+      if (slack.mode === "bot") {
+        if (slack.botToken.trim() && slack.channelId.trim()) {
+          channels.slack_bot_token = slack.botToken.trim()
+          channels.slack_channel_id = slack.channelId.trim()
+        }
+      } else if (slack.webhook.trim()) {
+        channels.slack = slack.webhook.trim()
+      }
+    }
 
     setSaving(true)
     try {
@@ -337,17 +367,95 @@ export default function SettingsPage() {
                   />
                 </div>
                 {slack.enabled && (
-                  <div className="mt-4">
-                    <Label className="text-sm text-muted-foreground">Webhook URL</Label>
-                    <Input
-                      type="url"
-                      value={slack.webhook}
-                      onChange={(e) =>
-                        setSlack((prev) => ({ ...prev, webhook: e.target.value }))
-                      }
-                      className="mt-1"
-                      placeholder="https://hooks.slack.com/services/..."
-                    />
+                  <div className="mt-4 space-y-4">
+                    {/* Mode picker: Bot Token (audio) vs Webhook (text-only) */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSlack((prev) => ({ ...prev, mode: "bot" }))
+                        }
+                        className={`rounded-lg border px-3 py-2 text-left text-sm transition-all ${
+                          slack.mode === "bot"
+                            ? "border-primary bg-primary/10"
+                            : "border-border bg-background hover:border-primary/50"
+                        }`}
+                      >
+                        <div className="font-medium flex items-center gap-1.5">
+                          Bot Token <span className="text-[10px] text-primary">🎧 오디오 포함</span>
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          mp3가 Slack에 인라인 플레이어로 렌더
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSlack((prev) => ({ ...prev, mode: "webhook" }))
+                        }
+                        className={`rounded-lg border px-3 py-2 text-left text-sm transition-all ${
+                          slack.mode === "webhook"
+                            ? "border-primary bg-primary/10"
+                            : "border-border bg-background hover:border-primary/50"
+                        }`}
+                      >
+                        <div className="font-medium">Webhook</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          텍스트만 (설정 간단)
+                        </div>
+                      </button>
+                    </div>
+
+                    {slack.mode === "bot" ? (
+                      <div className="space-y-3">
+                        <div>
+                          <Label className="text-sm text-muted-foreground">
+                            Bot User OAuth Token
+                          </Label>
+                          <Input
+                            type="text"
+                            value={slack.botToken}
+                            onChange={(e) =>
+                              setSlack((prev) => ({ ...prev, botToken: e.target.value }))
+                            }
+                            className="mt-1 font-mono text-xs"
+                            placeholder="xoxb-..."
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-sm text-muted-foreground">Channel ID</Label>
+                          <Input
+                            type="text"
+                            value={slack.channelId}
+                            onChange={(e) =>
+                              setSlack((prev) => ({ ...prev, channelId: e.target.value }))
+                            }
+                            className="mt-1 font-mono text-xs"
+                            placeholder="C01234567"
+                          />
+                          <p className="mt-1 text-[11px] text-muted-foreground">
+                            Slack 채널 이름 우클릭 → "View channel details" → 하단에 표시
+                          </p>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground leading-relaxed">
+                          Slack 앱에 <code>chat:write</code> + <code>files:write</code> 권한 필요.
+                          앱을 워크스페이스에 설치하고 해당 채널에 <code>/invite @서신</code>으로 초대하세요.
+                        </p>
+                      </div>
+                    ) : (
+                      <div>
+                        <Label className="text-sm text-muted-foreground">Webhook URL</Label>
+                        <Input
+                          type="url"
+                          value={slack.webhook}
+                          onChange={(e) =>
+                            setSlack((prev) => ({ ...prev, webhook: e.target.value }))
+                          }
+                          className="mt-1"
+                          placeholder="https://hooks.slack.com/services/..."
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

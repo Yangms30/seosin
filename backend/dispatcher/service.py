@@ -28,9 +28,26 @@ def _active_channels(channels: dict) -> list[tuple[str, object]]:
     web = channels.get("web")
     if web is True or (isinstance(web, dict) and web.get("enabled")) or web == "true":
         out.append(("web", True))
-    slack = channels.get("slack")
-    if isinstance(slack, str) and slack.startswith("http"):
-        out.append(("slack", slack))
+
+    # Slack: bot-token mode (audio-capable) wins over webhook when both are
+    # present. Bot mode requires BOTH slack_bot_token AND slack_channel_id.
+    bot_token = channels.get("slack_bot_token")
+    channel_id = channels.get("slack_channel_id")
+    if (
+        isinstance(bot_token, str)
+        and bot_token.startswith("xoxb-")
+        and isinstance(channel_id, str)
+        and channel_id.strip()
+    ):
+        out.append((
+            "slack",
+            {"mode": "bot", "token": bot_token, "channel_id": channel_id.strip()},
+        ))
+    else:
+        slack_webhook = channels.get("slack")
+        if isinstance(slack_webhook, str) and slack_webhook.startswith("http"):
+            out.append(("slack", {"mode": "webhook", "url": slack_webhook}))
+
     email = channels.get("email")
     if isinstance(email, str) and "@" in email:
         out.append(("email", email))
@@ -86,8 +103,15 @@ def dispatch_user_reports(db: Session, user_id: int) -> list[ChannelResult]:
             status, err = WebSender.send(reports)
             recipient: str | None = "web"
         elif name == "slack":
-            status, err = SlackSender.send(str(target), user.name, reports)
-            recipient = str(target)
+            status, err = SlackSender.send(target, user.name, reports)
+            # Snapshot recipient: channel_id for bot mode, webhook URL for webhook.
+            if isinstance(target, dict):
+                if target.get("mode") == "bot":
+                    recipient = f"#{target.get('channel_id')}"
+                else:
+                    recipient = str(target.get("url", ""))
+            else:
+                recipient = str(target)
         elif name == "email":
             status, err = EmailSender.send(str(target), user.name, reports)
             recipient = str(target)

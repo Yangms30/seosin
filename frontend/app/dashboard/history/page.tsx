@@ -98,10 +98,12 @@ function formatRecipient(channel: DispatchChannel): string {
   const r = channel.recipient ?? ""
   if (channel.channel === "web") return "웹 대시보드"
   if (channel.channel === "slack") {
-    if (!r) return "webhook (미기록)"
-    // Mask long webhook URL: keep only the last 8 chars for identification.
+    if (!r) return "slack (미기록)"
+    // Bot-mode snapshot comes in as "#{channel_id}" (e.g. "#C01234567").
+    if (r.startsWith("#")) return `Slack 채널 ${r}`
+    // Legacy webhook mode: mask the long URL to the last 8 chars.
     const tail = r.length > 8 ? r.slice(-8) : r
-    return `hooks.slack.com/…/${tail}`
+    return `webhook …${tail}`
   }
   return r || "(주소 없음)"
 }
