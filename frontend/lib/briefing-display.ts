@@ -26,17 +26,18 @@ export function parseUtcIso(iso: string | null | undefined): Date {
   return new Date(hasTz ? iso : `${iso}Z`)
 }
 
-export function formatRelativeTime(iso: string | null | undefined, now: Date = new Date()): string {
+/**
+ * Formats a timestamp as absolute local time, e.g. "4/20 00:41".
+ * (Previously showed relative "N시간 전" style — changed per user preference
+ * to make the exact generation moment immediately visible on every card.)
+ */
+export function formatRelativeTime(iso: string | null | undefined): string {
   if (!iso) return ""
   const d = parseUtcIso(iso)
   if (Number.isNaN(d.getTime())) return ""
-  const diffMs = now.getTime() - d.getTime()
-  const diffMin = Math.floor(diffMs / 60_000)
-  if (diffMin < 1) return "방금 전"
-  if (diffMin < 60) return `${diffMin}분 전`
-  const diffHr = Math.floor(diffMin / 60)
-  if (diffHr < 24) return `${diffHr}시간 전`
-  const diffDay = Math.floor(diffHr / 24)
-  if (diffDay < 7) return `${diffDay}일 전`
-  return d.toLocaleDateString("ko-KR", { month: "short", day: "numeric" })
+  const month = d.getMonth() + 1
+  const day = d.getDate()
+  const hh = String(d.getHours()).padStart(2, "0")
+  const mm = String(d.getMinutes()).padStart(2, "0")
+  return `${month}/${day} ${hh}:${mm}`
 }
