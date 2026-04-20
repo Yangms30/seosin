@@ -52,7 +52,7 @@ export function DashboardHeader() {
                 <path d="M16 14h-2" strokeLinecap="round" />
               </svg>
             </div>
-            <span className="text-xl font-bold text-foreground">BriefBot</span>
+            <span className="text-xl font-bold text-foreground">서신</span>
           </Link>
 
           {/* User section */}

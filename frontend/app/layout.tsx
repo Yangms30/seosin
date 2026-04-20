@@ -4,7 +4,7 @@ import { Toaster } from 'sonner'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'BriefBot - AI 뉴스 브리핑 서비스',
+  title: '서신 - AI 뉴스 브리핑 서비스',
   description: 'AI가 매일 핵심 뉴스를 브리핑해드립니다',
   generator: 'v0.app',
   icons: {

@@ -85,7 +85,7 @@ def _fetch_rss_url(
         try:
             with httpx.Client(timeout=timeout, follow_redirects=True) as client:
                 resp = client.get(
-                    url, headers={"User-Agent": "Mozilla/5.0 BriefBot/0.1"}
+                    url, headers={"User-Agent": "Mozilla/5.0 Seosin/0.1"}
                 )
                 resp.raise_for_status()
                 return feedparser.parse(resp.content)

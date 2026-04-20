@@ -33,7 +33,7 @@ _FILENAME_SAFE: dict[str, str] = {
 
 def _mp3_filename(report: Report) -> str:
     slug = _FILENAME_SAFE.get(report.category) or "category"
-    return f"briefbot-{slug}-{report.id}.mp3"
+    return f"seosin-{slug}-{report.id}.mp3"
 
 
 def _render_report_section(report: Report) -> str:
@@ -63,7 +63,7 @@ def _render_report_section(report: Report) -> str:
 
 def _render_html(user_name: str, reports: list[Report], audio_count: int) -> str:
     sections = "".join(_render_report_section(r) for r in reports)
-    title = escape(user_name) + "님, 오늘의 브리프봇 리포트입니다"
+    title = escape(user_name) + "님, 오늘의 서신 리포트입니다"
     audio_badge = (
         f"""
     <div style="display:inline-block;margin-top:10px;padding:6px 14px;background:#fff7f0;color:#9a3412;border:1px solid #fde4d1;border-radius:999px;font-size:12px;font-weight:600">
@@ -75,20 +75,20 @@ def _render_html(user_name: str, reports: list[Report], audio_count: int) -> str
     return f"""<!doctype html>
 <html lang="ko"><body style="margin:0;padding:24px;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Pretendard','Segoe UI',sans-serif">
   <div style="max-width:680px;margin:0 auto;background:#fff;border-radius:14px;padding:32px;border:1px solid #e5e7eb">
-    <div style="font-size:12px;color:#f26930;letter-spacing:0.12em;font-weight:700;text-transform:uppercase">BriefBot</div>
+    <div style="font-size:12px;color:#f26930;letter-spacing:0.16em;font-weight:700">서신</div>
     <h1 style="margin:10px 0 4px;font-size:24px;line-height:1.35;color:#111827">{title}</h1>
     <div style="font-size:13px;color:#6b7280">분야 {len(reports)}개 · 기사 {sum(len(r.articles) for r in reports)}건</div>
     {audio_badge}
     <hr style="border:none;border-top:1px solid #f3f4f6;margin:20px 0 0">
     {sections}
     <hr style="border:none;border-top:1px solid #e5e7eb;margin:32px 0 16px">
-    <div style="font-size:11px;color:#9ca3af">BriefBot — 가벼운 LLM으로 똑똑하게</div>
+    <div style="font-size:11px;color:#9ca3af">서신 — 가벼운 LLM으로 똑똑하게</div>
   </div>
 </body></html>"""
 
 
 def _render_text(user_name: str, reports: list[Report]) -> str:
-    lines = [f"{user_name}님, 오늘의 브리프봇 리포트입니다", "=" * 40]
+    lines = [f"{user_name}님, 오늘의 서신 리포트입니다", "=" * 40]
     for r in reports:
         lines.append("")
         lines.append(f"■ {r.category}")
@@ -150,7 +150,7 @@ class EmailSender:
 
         msg = EmailMessage()
         cats = ", ".join(r.category for r in reports)
-        msg["Subject"] = f"[BriefBot] 오늘의 리포트 ({cats})"
+        msg["Subject"] = f"[서신] 오늘의 리포트 ({cats})"
         msg["From"] = cfg.SMTP_FROM or cfg.SMTP_USER
         msg["To"] = to_email
         msg.set_content(_render_text(user_name, reports))

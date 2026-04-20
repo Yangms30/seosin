@@ -91,7 +91,7 @@ async def lifespan(app: FastAPI):
         pass
 
 
-app = FastAPI(title="BriefBot API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="서신 API", version="0.2.0", lifespan=lifespan)
 
 cfg = get_settings()
 app.add_middleware(
