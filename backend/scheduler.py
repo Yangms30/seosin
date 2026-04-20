@@ -4,6 +4,7 @@ NOTE: Currently disabled at startup (see main.py). Kept intact so it can be
 re-enabled post-demo by uncommenting the lifespan hooks.
 """
 from __future__ import annotations
+import json
 import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -20,17 +21,50 @@ _TIMEZONE = "Asia/Seoul"
 _scheduler: BackgroundScheduler | None = None
 
 # The full pipeline (collect → cluster → LLM summaries × 3 → LLM radio
-# synth → TTS × N → dispatch to every channel) takes ~5 minutes end-to-end
-# in a typical run. If the user asks for delivery at 08:00 we want the
-# email/Slack to actually *arrive* around 08:00, not start at 08:00 and
-# land at 08:05. So when we register a cron trigger we shift the fire
-# time this many minutes earlier than what the user typed.
-_PIPELINE_OFFSET_MINUTES = 3
+# synth → TTS × N → dispatch to every channel) scales with the number of
+# subscribed categories: roughly +1 minute per category (LLM summarize +
+# radio + TTS all run per-category). So the offset is category-aware
+# rather than a flat number — a 3-category user gets a 3-min shift, a
+# 6-category user gets 6 min.
+_OFFSET_PER_CATEGORY_MIN = 1
+_OFFSET_FLOOR_MIN = 1        # even with 0-1 categories, shift at least this much
+_OFFSET_CEILING_MIN = 15     # safety cap so offset never rolls back to prior day
 
 
-def _trigger_from_user_cron(cron: str) -> CronTrigger:
-    """Build a CronTrigger that fires _PIPELINE_OFFSET_MINUTES earlier than
-    the user's configured time, so by the time the pipeline finishes the
+def _compute_offset_minutes(category_count: int) -> int:
+    """Dynamic offset: ~1 min per category, clamped to a sensible range.
+
+    Real measurements: 6-category dispatch lands ~5 min after cron fires;
+    each category contributes roughly 1 minute of LLM + TTS work on the
+    gpt-5-nano + gpt-4o-mini-tts / ElevenLabs stack we use. Shifting the
+    trigger by that amount makes the user-visible arrival time line up
+    with the clock time the user configured.
+    """
+    est = max(category_count, 0) * _OFFSET_PER_CATEGORY_MIN
+    return max(_OFFSET_FLOOR_MIN, min(_OFFSET_CEILING_MIN, est))
+
+
+def _category_count_for_user(user_id: int) -> int:
+    """Read the live category count straight from the DB at trigger-build
+    time. Called from both start_scheduler (iterates Settings) and
+    upsert_user_job (fresh save from the settings route)."""
+    db = SessionLocal()
+    try:
+        s = db.query(Setting).filter(Setting.user_id == user_id).first()
+        if not s or not s.categories:
+            return 0
+        try:
+            cats = json.loads(s.categories)
+        except (TypeError, ValueError):
+            return 0
+        return len(cats) if isinstance(cats, list) else 0
+    finally:
+        db.close()
+
+
+def _trigger_from_user_cron(cron: str, offset_minutes: int) -> CronTrigger:
+    """Build a CronTrigger that fires `offset_minutes` earlier than the
+    user's configured time, so by the time the pipeline finishes the
     delivery arrives close to the requested clock time.
 
     Only shifts the simple "M H * * *" shape produced by the settings UI
@@ -48,7 +82,7 @@ def _trigger_from_user_cron(cron: str) -> CronTrigger:
     except ValueError:
         return CronTrigger.from_crontab(cron, timezone=_TIMEZONE)
 
-    total = hour * 60 + minute - _PIPELINE_OFFSET_MINUTES
+    total = hour * 60 + minute - offset_minutes
     total %= 24 * 60   # wrap around midnight
     new_hour, new_min = divmod(total, 60)
     adjusted = f"{new_min} {new_hour} {dom} {mon} {dow}"
@@ -56,7 +90,7 @@ def _trigger_from_user_cron(cron: str) -> CronTrigger:
         "scheduler: cron %r → fires at %r (%d min earlier for pipeline prep)",
         cron,
         adjusted,
-        _PIPELINE_OFFSET_MINUTES,
+        offset_minutes,
     )
     return CronTrigger.from_crontab(adjusted, timezone=_TIMEZONE)
 
@@ -94,7 +128,13 @@ def start_scheduler() -> BackgroundScheduler:
         for s in db.query(Setting).all():
             if s.schedule_cron:
                 try:
-                    trig = _trigger_from_user_cron(s.schedule_cron)
+                    cats = json.loads(s.categories) if s.categories else []
+                    cat_count = len(cats) if isinstance(cats, list) else 0
+                except (TypeError, ValueError):
+                    cat_count = 0
+                offset = _compute_offset_minutes(cat_count)
+                try:
+                    trig = _trigger_from_user_cron(s.schedule_cron, offset)
                     sched.add_job(
                         _run_for_user,
                         trigger=trig,
@@ -102,7 +142,13 @@ def start_scheduler() -> BackgroundScheduler:
                         id=_job_id(s.user_id),
                         replace_existing=True,
                     )
-                    logger.info("scheduler: registered user_id=%s cron=%s", s.user_id, s.schedule_cron)
+                    logger.info(
+                        "scheduler: registered user_id=%s cron=%s categories=%d offset=%d min",
+                        s.user_id,
+                        s.schedule_cron,
+                        cat_count,
+                        offset,
+                    )
                 except Exception as exc:
                     logger.warning("scheduler: invalid cron for user_id=%s: %s (%s)", s.user_id, s.schedule_cron, exc)
     finally:
@@ -130,9 +176,17 @@ def upsert_user_job(user_id: int, cron: str | None) -> None:
     if _scheduler.get_job(jid):
         _scheduler.remove_job(jid)
     if cron:
+        cat_count = _category_count_for_user(user_id)
+        offset = _compute_offset_minutes(cat_count)
         try:
-            trig = _trigger_from_user_cron(cron)
+            trig = _trigger_from_user_cron(cron, offset)
             _scheduler.add_job(_run_for_user, trigger=trig, args=[user_id], id=jid, replace_existing=True)
-            logger.info("scheduler: upserted user_id=%s cron=%s (offset=%d min)", user_id, cron, _PIPELINE_OFFSET_MINUTES)
+            logger.info(
+                "scheduler: upserted user_id=%s cron=%s categories=%d offset=%d min",
+                user_id,
+                cron,
+                cat_count,
+                offset,
+            )
         except Exception as exc:
             logger.warning("scheduler: invalid cron for user_id=%s: %s (%s)", user_id, cron, exc)
