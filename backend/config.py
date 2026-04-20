@@ -9,8 +9,17 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-2.5-flash-lite"
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-5-nano"
+    # OpenAI TTS kept as a fallback engine. When ELEVENLABS_API_KEY is set,
+    # services/tts.py prefers ElevenLabs to keep the TTS provider cleanly
+    # separated from the LLM selection list required by the submission brief.
     OPENAI_TTS_MODEL: str = "gpt-4o-mini-tts"
     OPENAI_TTS_VOICE: str = "nova"
+    # ElevenLabs TTS — primary engine when the key is configured.
+    # voice_id comes from the user's ElevenLabs library (VoiceLab / Voices).
+    # model_id "eleven_multilingual_v2" supports Korean reliably.
+    ELEVENLABS_API_KEY: str = ""
+    ELEVENLABS_VOICE_ID: str = ""
+    ELEVENLABS_MODEL_ID: str = "eleven_multilingual_v2"
     AUDIO_CACHE_DIR: str = "./media/audio"
     LLM_MAX_RETRIES: int = 2
 

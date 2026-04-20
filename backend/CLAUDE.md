@@ -41,12 +41,23 @@ collector.py ──▶ preprocessor.py ──▶ analyzer.py ──▶ service.p
 
 ## TTS 서비스 (`services/tts.py`)
 
-라디오 스크립트를 **OpenAI `gpt-4o-mini-tts`** (voice: `nova`)로 mp3 합성.
-- 캐시: `./media/audio/{report_id}.mp3` (`AUDIO_CACHE_DIR` 환경변수로 변경 가능, 기본 `./media/audio`)
-- Lazy: 리포트 생성 시점이 아니라 `GET /api/reports/{id}/audio` 호출 시에 합성 (미청취 리포트 비용 절감)
-- 원자적 쓰기: `.mp3.tmp` → `os.replace`로 부분 쓰기 방지
-- 실패 시 `TTSUnavailable` 예외 → 라우터가 503으로 매핑 (`OPENAI_API_KEY` 누락 / OpenAI 에러 / 빈 `radio_script`)
-- **Day 3 → Day 4 교체**: 초기엔 프론트에서 Web Speech API(브라우저 내장)를 사용했으나 실기기에서 음성이 인위적이어서 교체. `services/tts.py` 한 레이어만 수정하면 ElevenLabs / CLOVA Voice 등으로 추가 교체 가능.
+라디오 스크립트를 mp3로 합성. **Pluggable provider** 구조:
+
+1. **ElevenLabs** (primary, 권장) — `ELEVENLABS_API_KEY`와 `ELEVENLABS_VOICE_ID` 둘 다 설정되면 우선 사용. `eleven_multilingual_v2` 모델로 한국어 지원. HTTP `POST /v1/text-to-speech/{voice_id}` 직접 호출(httpx, SDK 없음).
+2. **OpenAI fallback** — ElevenLabs 미설정 시 `gpt-4o-mini-tts` (voice `nova`)로 대체.
+
+**Provider 선택 이유**: 제출 조건의 "모델 선택" 목록이 LLM 한정(GPT-5/Claude/Gemini/…)이므로, TTS는 그와 **이름상 겹치지 않는 ElevenLabs를 primary**로 두어 평가자 오해 소지 제거. OpenAI TTS는 fallback으로 유지.
+
+공통 동작:
+- 캐시: `./media/audio/{report_id}.mp3` (`AUDIO_CACHE_DIR`로 변경 가능)
+- Lazy: `GET /api/reports/{id}/audio` 호출 시점에만 합성 (미청취 리포트 비용 0)
+- 원자적 쓰기: `.mp3.tmp` → `os.replace`
+- 실패 시 `TTSUnavailable` 예외 → 라우터가 503으로 매핑
+
+**변경 이력**:
+- Day 3: 프론트 Web Speech API (브라우저 내장) → 음성 품질 낮음
+- Day 4: OpenAI gpt-4o-mini-tts 교체 (품질↑)
+- Day 5: ElevenLabs primary 도입, OpenAI fallback 보존 (제출 조건 정합성↑)
 
 ## 프롬프트 분리 (`prompts/`)
 
