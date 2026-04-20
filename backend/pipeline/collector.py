@@ -340,6 +340,10 @@ class MultiSourceCollector:
         self.per_category = per_category
 
     def fetch(self, category: str) -> list[RawArticle]:
+        # Imported lazily to avoid a circular dep between collector and
+        # preprocessor (preprocessor imports RawArticle from this module).
+        from .preprocessor import normalize_title
+
         merged: list[RawArticle] = []
         counts: dict[str, int] = {}
         for client in self.clients:
@@ -356,13 +360,26 @@ class MultiSourceCollector:
             counts[getattr(client, "name", type(client).__name__)] = len(articles)
             merged.extend(articles)
 
-        # URL-level dedupe; clustering handles the rest.
-        seen: set[str] = set()
+        # Two-stage dedupe before TF-IDF clustering:
+        #   1) exact URL match — catches an article syndicated under the same
+        #      link twice (rare, but defensive).
+        #   2) normalized title match — catches the *same* story republished
+        #      under different URLs (e.g. Naver syndicating a Yonhap article,
+        #      or Google News pointing at a different outlet's copy). TF-IDF
+        #      handles near-duplicates, but exact-title copies pollute cluster
+        #      sizes and should be collapsed here.
+        seen_urls: set[str] = set()
+        seen_title_keys: set[str] = set()
         deduped: list[RawArticle] = []
         for a in merged:
-            if not a.link or a.link in seen:
+            if not a.link or a.link in seen_urls:
                 continue
-            seen.add(a.link)
+            title_key = normalize_title(a.title).strip().lower()
+            if title_key and title_key in seen_title_keys:
+                continue
+            seen_urls.add(a.link)
+            if title_key:
+                seen_title_keys.add(title_key)
             deduped.append(a)
 
         logger.info(
