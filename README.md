@@ -192,18 +192,18 @@ pnpm dev
 ```
 [수집 단계]                                       [분석 단계]
                                                  ┌─────────────────────────────┐
-연합뉴스 RSS    ─┐                                │ OpenAIAnalyzer (gpt-5-nano) │
-서울신문 RSS    ─┤   카테고리별 60~80건           │                             │
-Google News RSS ─┼─▶  URL + 제목 정규화 dedup ─▶ │ Step1: 기사 3줄 요약        │
-Naver 검색 API  ─┘   → 40~60건 unique            │   (문어체 + 재시도 2회)     │
+연합뉴스 RSS    ─┐                                │ OpenAIAnalyzer (gpt-5-nano)  │
+서울신문 RSS    ─┤   카테고리별 60~80건              │                               │
+Google News RSS ─┼─▶  URL + 제목 정규화 dedup ─▶ │ Step1: 기사 3줄 요약              │
+Naver 검색 API  ─┘   → 40~60건 unique            │   (문어체 + 재시도 2회)           │
+                      ↓                         │                              │
+                    TF-IDF 벡터화                │ Step2: 라디오 스크립트            │
+                    (ngram 1-2, sublinear)       │   (2~3분 구어체, 숫자 풀이)      │
                       ↓                          │                             │
-                    TF-IDF 벡터화                │ Step2: 라디오 스크립트      │
-                    (ngram 1-2, sublinear)       │   (2~3분 구어체, 숫자 풀이) │
-                      ↓                          │                             │
-                    Greedy 클러스터링            │ 실패 시 graceful:           │
-                    cosine sim ≥ 0.45            │   radio_script = NULL       │
-                      ↓                          │   summary = RSS fallback    │
-                    클러스터 크기 정렬            │                             │
+                    Greedy 클러스터링               │ 실패 시 graceful:           │
+                    cosine sim ≥ 0.45           │   radio_script = NULL       │
+                      ↓                         │   summary = RSS fallback    │
+                    클러스터 크기 정렬              │                             │
                     = 공영 중요도 signal          └─────────────────────────────┘
                       ↓
                     Top-3 + 대표 선별                         ↓
