@@ -192,7 +192,7 @@ pnpm dev
 ```
 [수집 단계]                                       [분석 단계]
                                                  ┌─────────────────────────────┐
-연합뉴스 RSS    ─┐                                │ OpenAIAnalyzer (gpt-5-nano)  │
+연합뉴스 RSS    ─┐                                │ OpenAIAnalyzer (gpt-5-mini)  │
 서울신문 RSS    ─┤   카테고리별 60~80건              │                               │
 Google News RSS ─┼─▶  URL + 제목 정규화 dedup ─▶ │ Step1: 기사 3줄 요약              │
 Naver 검색 API  ─┘   → 40~60건 unique            │   (문어체 + 재시도 2회)           │
@@ -242,7 +242,6 @@ Naver 검색 API  ─┘   → 40~60건 unique            │   (문어체 + 재
 - **Claude Code** (Anthropic) — 주요 개발 파트너. 설계 / 백엔드 / 프론트엔드 / 디버깅 전 단계.
 - **v0.app** (Vercel) — 초기 대시보드 UI 스캐폴드. 이후 Claude Code 와 수동 리팩토링.
 
-개발 방법론: **PDCA (Plan → Design → Do → Check → Act)** 
 
 ---
 
