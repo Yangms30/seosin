@@ -36,7 +36,7 @@
 └────────────────────────────┘                 │  Pipeline                        │
                                                │   ├─ collector    (4 소스)        │
                                                │   ├─ preprocessor (TF-IDF 0.45)  │
-                                               │   ├─ analyzer     (gpt-5-nano)   │
+                                               │   ├─ analyzer     (gpt-5-mini)   │
                                                │   └─ service      (오케스트레이션)   │
                                                │                                  │
                                                │  Dispatcher                      │
@@ -64,7 +64,7 @@
 | Frontend | Next.js 16 (App Router) + React 19.2 + TypeScript strict + pnpm | ✅ |
 | UI | shadcn/ui + Tailwind 4 + Framer Motion + Sonner | ✅ |
 | Backend | FastAPI + SQLAlchemy + SQLite (Python 3.11+) | ✅ |
-| LLM | OpenAI `gpt-5-nano` — 경량 · 저비용 · temperature 미지원(1.0 고정) | ✅ |
+| LLM | OpenAI `gpt-5-mini` — 경량 · 저비용 · temperature 미지원(1.0 고정) | ✅ |
 | News | Google News + 연합뉴스 + 서울신문 RSS + Naver 검색 API (4-source, `feedparser` + `httpx`) | ✅ |
 | Clustering | scikit-learn TF-IDF(bigram, sublinear) + cosine similarity (threshold 0.45) | ✅ |
 | Post-select 안전망 | pairwise 유사도 0.55 초과 시 대표 기사 교체 (최대 4회) | ✅ |
